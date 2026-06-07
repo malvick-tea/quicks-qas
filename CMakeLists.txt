@@ -36,6 +36,7 @@ add_library(qas_core STATIC
     src/buf/buf.c
     src/elf/elf.c
     src/elf/internal/serialize.c
+    src/arena/arena.c
 )
 
 # Modules include each other as "module/header.h"; src/ is the single include
