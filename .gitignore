@@ -45,3 +45,6 @@ Thumbs.db
 Desktop.ini
 desktop.ini
 .DS_Store
+
+# Internal design docs (kept local, not published)
+/docs/
