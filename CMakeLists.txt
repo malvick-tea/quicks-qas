@@ -39,6 +39,8 @@ add_library(qas_core STATIC
     src/arena/arena.c
     src/ast/ast.c
     src/parser/parser.c
+    src/encoder/encoder.c
+    src/encoder/internal/insn_table.c
 )
 
 # Modules include each other as "module/header.h"; src/ is the single include
