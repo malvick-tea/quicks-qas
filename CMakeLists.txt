@@ -33,6 +33,7 @@ add_library(qas_core STATIC
     src/token/token.c
     src/lexer/lexer.c
     src/reg/reg.c
+    src/buf/buf.c
 )
 
 # Modules include each other as "module/header.h"; src/ is the single include
