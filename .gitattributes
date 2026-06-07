@@ -1,0 +1,17 @@
+# Enforce consistent, reproducible line endings across all platforms.
+# Byte-exact reproducibility matters to this project (we diff encoded output against
+# specs), so we normalize all text to LF in the repository and never let the checkout
+# OS rewrite it. Shell scripts in particular MUST stay LF to remain executable.
+* text=auto eol=lf
+
+# Common binary artifacts: never apply text/eol munging to these.
+*.o     binary
+*.obj   binary
+*.a     binary
+*.lib   binary
+*.bin   binary
+*.elf   binary
+*.img   binary
+*.iso   binary
+*.png   binary
+*.pdf   binary

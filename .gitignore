@@ -1,0 +1,47 @@
+# Build output
+/build/
+/out/
+/_build*/
+cmake-build-*/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Compiled objects / libraries / binaries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Generated kernel/image artifacts (expected bytes live in tests as data, not files)
+*.elf
+*.bin
+*.img
+*.iso
+*.map
+
+# Visual Studio / MSVC
+.vs/
+*.user
+*.vcxproj.filters
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+desktop.ini
+.DS_Store
