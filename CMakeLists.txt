@@ -41,6 +41,13 @@ add_library(qas_core STATIC
     src/parser/parser.c
     src/encoder/encoder.c
     src/encoder/internal/insn_table.c
+    src/asm/asm.c
+    src/asm/internal/fixups.c
+    src/asm/internal/section.c
+    src/asm/internal/symtab.c
+    src/asm/internal/strdec.c
+    src/asm/internal/unit.c
+    src/asm/internal/directive.c
 )
 
 # Modules include each other as "module/header.h"; src/ is the single include

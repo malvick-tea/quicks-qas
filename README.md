@@ -11,7 +11,8 @@ retire (it replaces `nasm` / GNU `as`).
 > [ADR-0004 (ELF64)](../Quicks-Meta/docs/adr/0004-object-format-elf64.md).
 
 ## Status
-**Phase 2, in progress.** Landed so far: the front-of-pipe foundation —
+**Phase 2: assembling.** The full pipeline works — `qas` reads an Intel-syntax
+source and writes an ELF64 relocatable object.
 
 | Module | Role |
 | --- | --- |
@@ -20,9 +21,18 @@ retire (it replaces `nasm` / GNU `as`).
 | `src/diag`   | Accumulates errors/warnings with source spans; prints with a caret. |
 | `src/token`  | The token data type (pure, dependency-free). |
 | `src/lexer`  | Hand-written Intel-syntax tokenizer (locale-independent ASCII). |
-| `src/app`    | CLI; currently offers `--dump-tokens`. |
+| `src/reg`    | x86-64 register table (encoding, REX split, byte-register rules). |
+| `src/buf`    | Growable little-endian byte buffer with in-place patching. |
+| `src/arena`  | Region allocator for the parser's AST nodes. |
+| `src/ast`    | Typed statements and operands shared by parser and encoder. |
+| `src/parser` | Recursive-descent parser (labels, directives, instructions). |
+| `src/encoder`| Table-driven instruction encoder (Intel SDM Vol 2; ADR-0011). |
+| `src/elf`    | From-scratch ELF64 `ET_REL` writer (ADR-0004; x86-64 psABI). |
+| `src/asm`    | The driver: sections, symbols, label layout, fixup resolution. |
+| `src/app`    | CLI: assemble (`-o`), or `--dump-tokens`. |
 
-Next: parser → instruction encoder (Intel SDM Vol 2) → ELF64 writer (ADR-0004).
+Next: broaden the instruction table and directive set as the kernel/tools need
+them; differentially check emitted objects during bootstrap, then feed `qld`.
 
 ## Architecture
 Per [ADR-0008](../Quicks-Meta/docs/adr/0008-directory-architecture-rules.md):
@@ -48,12 +58,16 @@ Builds clean under `/W4 /WX /permissive-` (MSVC) and is written to be clean unde
 ```sh
 ctest --test-dir build -C Debug --output-on-failure
 ```
-Suites: `status`, `source`, `token`, `lexer`. The lexer suite asserts byte-exact
-lexemes and exact integer values, the precision an assembler requires.
+Suites: `status`, `source`, `token`, `lexer`, `reg`, `buf`, `elf`, `arena`,
+`parser`, `encoder`, `asm`. They assert byte-exact output against the Intel SDM /
+ELF psABI — instruction encodings, object layout, symbol ordering, and
+relocations — the precision an assembler requires.
 
 ## Run
 ```sh
-qas --dump-tokens examples/demo.s
+qas examples/demo.s -o demo.o      # assemble to an ELF64 object
+qas --dump-tokens examples/demo.s  # or just inspect the token stream
 ```
-Prints the token stream; malformed input is reported with `file:line:col` and a
-caret, and the exit code is non-zero (0 ok, 1 errors, 2 usage).
+Malformed input is reported with `file:line:col` and a caret; the exit code is
+0 (ok), 1 (errors), or 2 (usage). With `-o` omitted, the object is written next to
+the input with a `.o` extension.

@@ -2,11 +2,11 @@
  * qas — command-line entry point.
  *
  * What works today
- *   The assembler is being built bottom-up (Quicks-Meta roadmap, Phase 2). The
- *   lexer is the first stage to land, so this CLI currently offers a
- *   `--dump-tokens` mode that scans a source file and prints its token stream
- *   plus any diagnostics. Full assembly (parse -> encode -> ELF) is not yet
- *   implemented; the CLI says so plainly rather than pretending.
+ *   The assembler now runs the full pipeline (Quicks-Meta roadmap, Phase 2):
+ *   it parses an Intel-syntax source, encodes the instructions, lays out the
+ *   sections, resolves intra-section references, and writes an ELF64 relocatable
+ *   object. The default action is to assemble; `--dump-tokens` remains available
+ *   as a front-end diagnostic that prints the lexer's token stream.
  *
  * Exit codes (stable contract)
  *   0  success
@@ -17,8 +17,10 @@
  * the library modules (qas_core) stay free of I/O policy so they remain testable.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include "asm/asm.h"
 #include "diag/diag.h"
 #include "lexer/lexer.h"
 #include "source/source.h"
@@ -35,16 +37,17 @@ enum {
 static void print_usage(FILE *out, const char *prog)
 {
     fprintf(out,
-            "qas — the Quicks assembler (early build)\n"
+            "qas — the Quicks assembler\n"
             "\n"
             "Usage:\n"
-            "  %s --dump-tokens <file>   Scan <file> and print its token stream\n"
-            "  %s --help                 Show this help\n"
-            "  %s --version              Show version information\n"
+            "  %s [-o <out.o>] <in.s>     Assemble <in.s> to an ELF64 object\n"
+            "  %s --dump-tokens <file>    Scan <file> and print its token stream\n"
+            "  %s --help                  Show this help\n"
+            "  %s --version               Show version information\n"
             "\n"
-            "Note: full assembly is not implemented yet; only --dump-tokens is\n"
-            "available in this build.\n",
-            prog, prog, prog);
+            "If -o is omitted, the object is written next to the input with a\n"
+            "'.o' extension.\n",
+            prog, prog, prog, prog);
 }
 
 /*
@@ -117,11 +120,108 @@ static int run_dump_tokens(const qas_source *src)
     return exit_code;
 }
 
+/*
+ * Derive a default output path from the input: replace the final extension with
+ * ".o", or append ".o" if the base name has none. Returns a malloc'd string the
+ * caller frees, or NULL on allocation failure.
+ */
+static char *default_output_path(const char *input)
+{
+    size_t len = strlen(input);
+
+    /* Find the last extension dot, but only within the final path component, so a
+       directory like "../a.b/in" is not mistaken for an extension. */
+    size_t base = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (input[i] == '/' || input[i] == '\\') {
+            base = i + 1;
+        }
+    }
+    size_t dot = len; /* "no dot" sentinel. */
+    for (size_t i = base; i < len; ++i) {
+        if (input[i] == '.') {
+            dot = i;
+        }
+    }
+
+    char *out;
+    if (dot == len) {
+        out = (char *)malloc(len + 3); /* + ".o" + NUL */
+        if (out != NULL) {
+            memcpy(out, input, len);
+            memcpy(out + len, ".o", 3);
+        }
+    } else {
+        out = (char *)malloc(dot + 3); /* keep up to the dot, + "o" + NUL */
+        if (out != NULL) {
+            memcpy(out, input, dot + 1); /* include the '.' */
+            out[dot + 1] = 'o';
+            out[dot + 2] = '\0';
+        }
+    }
+    return out;
+}
+
+/* Write `size` bytes to `path` in binary mode. Returns QAS_OK or QAS_ERR_IO. */
+static qas_status write_file(const char *path, const uint8_t *bytes, size_t size)
+{
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) {
+        return QAS_ERR_IO;
+    }
+    size_t written = (size > 0) ? fwrite(bytes, 1, size, f) : 0;
+    int    closed  = fclose(f);
+    if (written != size || closed != 0) {
+        return QAS_ERR_IO;
+    }
+    return QAS_OK;
+}
+
+/*
+ * Assemble `src` and, on success, write the object to `output_path`. Returns a
+ * process exit code; diagnostics are printed to stderr.
+ */
+static int run_assemble(const qas_source *src, const char *output_path)
+{
+    qas_diag_sink diags;
+    qas_diag_sink_init(&diags);
+
+    uint8_t *image = NULL;
+    size_t   size  = 0;
+    qas_status st = qas_assemble(src, &diags, &image, &size);
+
+    int exit_code = QAS_EXIT_OK;
+    if (st != QAS_OK) {
+        /* Fatal (out of memory, bad argument): not a normal user error. */
+        fprintf(stderr, "qas: internal error: %s\n", qas_status_str(st));
+        exit_code = QAS_EXIT_ERROR;
+    } else if (image == NULL) {
+        /* The source had errors; the diagnostics below explain them. */
+        exit_code = QAS_EXIT_ERROR;
+    } else {
+        qas_status wst = write_file(output_path, image, size);
+        if (wst != QAS_OK) {
+            fprintf(stderr, "qas: cannot write '%s': %s\n", output_path,
+                    qas_status_str(wst));
+            exit_code = QAS_EXIT_ERROR;
+        }
+    }
+
+    if (qas_diag_count(&diags) > 0) {
+        qas_diag_sink_print(&diags, stderr);
+    }
+
+    free(image);
+    qas_diag_sink_dispose(&diags);
+    return exit_code;
+}
+
 int main(int argc, char **argv)
 {
     const char *prog = (argc > 0 && argv[0] != NULL) ? argv[0] : "qas";
 
-    const char *input_path = NULL;
+    const char *input_path  = NULL;
+    const char *output_path = NULL;
     bool        dump_tokens = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -132,11 +232,19 @@ int main(int argc, char **argv)
         }
         if (strcmp(arg, "--version") == 0) {
             /* Version is intentionally pre-1.0 during bootstrap. */
-            printf("qas 0.0.1 (bootstrap; lexer only)\n");
+            printf("qas 0.1.0 (bootstrap)\n");
             return QAS_EXIT_OK;
         }
         if (strcmp(arg, "--dump-tokens") == 0 || strcmp(arg, "-t") == 0) {
             dump_tokens = true;
+            continue;
+        }
+        if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "qas: option '%s' needs an argument\n", arg);
+                return QAS_EXIT_USAGE;
+            }
+            output_path = argv[++i];
             continue;
         }
         if (arg[0] == '-' && arg[1] != '\0') {
@@ -158,13 +266,6 @@ int main(int argc, char **argv)
         return QAS_EXIT_USAGE;
     }
 
-    if (!dump_tokens) {
-        /* The only implemented action so far. Be honest about it. */
-        fprintf(stderr,
-                "qas: assembling is not implemented yet; re-run with --dump-tokens\n");
-        return QAS_EXIT_USAGE;
-    }
-
     qas_source src;
     qas_status st = qas_source_load_file(input_path, &src);
     if (st != QAS_OK) {
@@ -172,7 +273,26 @@ int main(int argc, char **argv)
         return QAS_EXIT_ERROR;
     }
 
-    int exit_code = run_dump_tokens(&src);
+    int exit_code;
+    if (dump_tokens) {
+        exit_code = run_dump_tokens(&src);
+    } else {
+        /* Assemble. Use an explicit -o, or a name derived from the input. */
+        char *derived = NULL;
+        const char *out = output_path;
+        if (out == NULL) {
+            derived = default_output_path(input_path);
+            if (derived == NULL) {
+                fprintf(stderr, "qas: out of memory\n");
+                qas_source_dispose(&src);
+                return QAS_EXIT_ERROR;
+            }
+            out = derived;
+        }
+        exit_code = run_assemble(&src, out);
+        free(derived);
+    }
+
     qas_source_dispose(&src);
     return exit_code;
 }
